@@ -98,8 +98,9 @@ int main()
           std::perror(("cd: " + path).c_str());
         }
       }
-      else {
-        std::cout << input.substr(0, 2) << ": " << path << ": No such file or directory";
+      else 
+      {
+        std::cout << input.substr(0, 2) << ": " << path << ": No such file or directory" << std::endl;
       }
 
     }
