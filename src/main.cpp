@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstdio>
 #include <sys/wait.h>
+#include <filesystem>
 
 int main()
 {
@@ -85,6 +86,22 @@ int main()
         std::cout << cwd << std::endl;
         std::free(cwd);
       }
+    }
+    else if (input.substr(0, 2) == "cd") // cd command
+    {
+      std::string path = input.substr(3);
+      
+      if (std::filesystem::exists(path))
+      {
+        if (chdir(path.c_str()) == -1)
+        {
+          std::perror(("cd: " + path).c_str());
+        }
+      }
+      else {
+        std::cout << input.substr(0, 2) << ": " << path << ": No such file or directory";
+      }
+
     }
     else
     {
