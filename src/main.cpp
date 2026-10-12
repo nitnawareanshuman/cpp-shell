@@ -31,7 +31,9 @@ int main()
     {
       std::string command = input.substr(5);
 
-      if (command == "echo" || command == "type" || command == "exit" || command == "pwd")
+      if (command == "echo" || command == "type" || 
+          command == "exit" || command == "pwd" ||
+          command == "cd")
       {
         std::cout << command << " is a shell builtin\n";
         continue;
@@ -87,23 +89,30 @@ int main()
         std::free(cwd);
       }
     }
-    else if (input.substr(0, 2) == "cd") // cd command
+    else if (input == "cd" || input.substr(0, 3) == "cd ") // cd command
     {
-      std::string path = input.substr(3);
-      
-      if (std::filesystem::exists(path))
+      std::string path = (input == "cd") ? "~" : input.substr(3);
+
+      if (path == "~" || path.substr(0, 2) == "~/")
       {
-        if (chdir(path.c_str()) == -1)
+        const char *home = std::getenv("HOME");
+
+        if (home == nullptr)
         {
-          std::perror(("cd: " + path).c_str());
+          std::cerr << "cd: HOME not set\n";
+          continue;
         }
-      }
-      else 
-      {
-        std::cout << input.substr(0, 2) << ": " << path << ": No such file or directory" << std::endl;
+
+        path = std::string(home) + path.substr(1);
       }
 
+      // Change directory only once.
+      if (chdir(path.c_str()) == -1)
+      {
+        std::perror(("cd: " + path).c_str());
+      }
     }
+
     else
     {
       // Split input into the command name and its arguments.
