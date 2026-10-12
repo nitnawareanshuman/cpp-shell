@@ -22,15 +22,15 @@ int main()
       break;
     }
 
-    if (input == "exit")
+    if (input == "exit") // exit command
     {
       break;
     }
-    else if (input.substr(0, 5) == "type ")
+    else if (input.substr(0, 5) == "type ") // type command
     {
       std::string command = input.substr(5);
 
-      if (command == "echo" || command == "type" || command == "exit")
+      if (command == "echo" || command == "type" || command == "exit" || command == "pwd")
       {
         std::cout << command << " is a shell builtin\n";
         continue;
@@ -68,9 +68,23 @@ int main()
         std::cout << command << ": not found\n";
       }
     }
-    else if (input.substr(0, 5) == "echo ")
+    else if (input.substr(0, 5) == "echo ") // echo command
     {
       std::cout << input.substr(5) << '\n';
+    }
+    else if (input == "pwd") // pwd command
+    {
+      char* cwd = getcwd(nullptr, 0);
+
+      if (cwd == nullptr)
+      {
+        std::perror("pwd");
+      }
+      else
+      {
+        std::cout << cwd << std::endl;
+        std::free(cwd);
+      }
     }
     else
     {
