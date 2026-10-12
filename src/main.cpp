@@ -3,6 +3,9 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#include <vector>
+#include <cstdio>
+#include <sys/wait.h>
 
 int main()
 {
@@ -71,7 +74,71 @@ int main()
     }
     else
     {
-      std::cout << input << ": command not found\n";
+      // Split input into the command name and its arguments.
+      std::istringstream input_stream(input);
+      std::vector<std::string> args;
+      std::string word;
+
+      while (input_stream >> word)
+      {
+        args.push_back(word);
+      }
+
+      // Ignore empty input.
+      if (args.empty())
+      {
+        continue;
+      }
+
+      // execvp expects a null-terminated array of C-string pointers.
+      std::vector<char *> argv;
+
+      for (std::string &arg : args)
+      {
+        argv.push_back(arg.data()); // C++17 or later
+      }
+
+      argv.push_back(nullptr);
+
+      pid_t pid = fork();
+
+      if (pid == -1)
+      {
+        // The child process could not be created.
+        std::perror("fork");
+      }
+      else if (pid == 0)
+      {
+        // Child process: find and execute the program.
+        execvp(argv[0], argv.data());
+
+        // This code runs only if execvp fails.
+        int error = errno;
+
+        if (error == ENOENT)
+        {
+          std::cerr << args[0] << ": command not found\n";
+        }
+        else
+        {
+          errno = error;
+          std::perror(args[0].c_str());
+        }
+
+        _exit(error == ENOENT ? 127 : 126);
+      }
+      else
+      {
+        // Parent process: wait for the child to finish.
+        while (waitpid(pid, nullptr, 0) == -1)
+        {
+          if (errno != EINTR)
+          {
+            std::perror("waitpid");
+            break;
+          }
+        }
+      }
     }
   }
 
