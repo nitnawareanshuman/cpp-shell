@@ -14,14 +14,21 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
 {
   std::string word;
   bool inSingleQuotes = false;
+  bool inDoubleQuotes = false;
   bool wordStarted = false;
 
   for (char ch : input)
   {
-    if (ch == '\'')
+    if (ch == '\'' && !inDoubleQuotes)
     {
       // Change quote state without adding the quote to the argument.
       inSingleQuotes = !inSingleQuotes;
+      wordStarted = true;
+    }
+    else if (ch == '"' && !inSingleQuotes)
+    {
+      //Handle double quotes outside single quotes
+      inDoubleQuotes = !inDoubleQuotes;
       wordStarted = true;
     }
     else if (std::isspace(static_cast<unsigned char>(ch)) && !inSingleQuotes)
@@ -45,6 +52,10 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
   {
     std::cerr << "Unclosed single quote\n";
     return false;
+  }
+  if (inDoubleQuotes)
+  {
+    std::cerr << "Unclosed double quote\n";
   }
 
   if (wordStarted)
@@ -125,7 +136,7 @@ int main()
         std::cout << command << ": not found\n";
       }
     }
-    else if (args[0] == "echo ") // echo command
+    else if (args[0] == "echo") // echo command
     {
       for (std::size_t i = 1; i < args.size(); ++i)
       {
