@@ -7,6 +7,53 @@
 #include <cstdio>
 #include <sys/wait.h>
 #include <filesystem>
+#include <cerrno>
+#include <cctype>
+
+bool parseArguments(const std::string &input, std::vector<std::string> &args)
+{
+  std::string word;
+  bool inSingleQuotes = false;
+  bool wordStarted = false;
+
+  for (char ch : input)
+  {
+    if (ch == '\'')
+    {
+      // Change quote state without adding the quote to the argument.
+      inSingleQuotes = !inSingleQuotes;
+      wordStarted = true;
+    }
+    else if (std::isspace(static_cast<unsigned char>(ch)) && !inSingleQuotes)
+    {
+      // Only whitespace outside quotes separates arguments.
+      if (wordStarted)
+      {
+        args.push_back(word);
+        word.clear();
+        wordStarted = false;
+      }
+    }
+    else
+    {
+      word += ch;
+      wordStarted = true;
+    }
+  }
+
+  if (inSingleQuotes)
+  {
+    std::cerr << "Unclosed single quote\n";
+    return false;
+  }
+
+  if (wordStarted)
+  {
+    args.push_back(word);
+  }
+
+  return true;
+}
 
 int main()
 {
@@ -21,6 +68,13 @@ int main()
     if (!std::getline(std::cin, input))
     {
       break;
+    }
+
+    std::vector<std::string> args;
+
+    if (!parseArguments(input, args) || args.empty())
+    {
+      continue;
     }
 
     if (input == "exit") // exit command
@@ -71,9 +125,19 @@ int main()
         std::cout << command << ": not found\n";
       }
     }
-    else if (input.substr(0, 5) == "echo ") // echo command
+    else if (args[0] == "echo ") // echo command
     {
-      std::cout << input.substr(5) << '\n';
+      for (std::size_t i = 1; i < args.size(); ++i)
+      {
+        if (i > 1)
+        {
+          std::cout << ' ';
+        }
+
+        std::cout << args[i];
+      }
+
+      std::cout << '\n';
     }
     else if (input == "pwd") // pwd command
     {
@@ -115,30 +179,14 @@ int main()
 
     else
     {
-      // Split input into the command name and its arguments.
-      std::istringstream input_stream(input);
-      std::vector<std::string> args;
-      std::string word;
-
-      while (input_stream >> word)
-      {
-        args.push_back(word);
-      }
-
-      // Ignore empty input.
-      if (args.empty())
-      {
-        continue;
-      }
-
-      // execvp expects a null-terminated array of C-string pointers.
+      // Use the arguments already parsed above.
       std::vector<char *> argv;
 
       for (std::string &arg : args)
       {
-        argv.push_back(arg.data()); // C++17 or later
+        argv.push_back(arg.data());
       }
-
+      
       argv.push_back(nullptr);
 
       pid_t pid = fork();
