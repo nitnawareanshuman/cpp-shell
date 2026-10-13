@@ -17,9 +17,20 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
   bool inDoubleQuotes = false;
   bool wordStarted = false;
 
-  for (char ch : input)
+  for (std::size_t i = 0; i < input.size(); ++i)
   {
-    if (ch == '\'' && !inDoubleQuotes)
+    char ch = input[i];
+    // Handle backlash escaping outside both types of quotes
+    if (ch == '\\' && !inSingleQuotes && !inDoubleQuotes)
+    {
+      wordStarted = true;
+
+      if (i + 1 < input.size())
+      {
+        word += input[++i];
+      }
+    }
+    else if (ch == '\'' && !inDoubleQuotes)
     {
       // Change quote state without adding the quote to the argument.
       inSingleQuotes = !inSingleQuotes;
