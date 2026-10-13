@@ -31,7 +31,7 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
       inDoubleQuotes = !inDoubleQuotes;
       wordStarted = true;
     }
-    else if (std::isspace(static_cast<unsigned char>(ch)) && !inSingleQuotes)
+    else if (std::isspace(static_cast<unsigned char>(ch)) && !inSingleQuotes && !inDoubleQuotes)
     {
       // Only whitespace outside quotes separates arguments.
       if (wordStarted)
