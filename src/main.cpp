@@ -20,8 +20,37 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
   for (std::size_t i = 0; i < input.size(); ++i)
   {
     char ch = input[i];
+
+    // Backlash handling inside double quotes
+    if (ch == '\\' && inDoubleQuotes)
+    {
+      if (i + 1 < input.size())
+      {
+        char next = input[i + 1];
+
+        // Inside double quotes, only these characters are escaped in this stage: " and \.
+        if (next == '"' || next == '\\')
+        {
+          word += next;
+          ++i;
+        }
+
+        // Preserve the backslash for other characters.
+        else {
+          word += ch;
+        }
+      }
+
+      else 
+      {
+        word += ch;
+      }
+
+      wordStarted = true;
+    }
+
     // Handle backlash escaping outside both types of quotes
-    if (ch == '\\' && !inSingleQuotes && !inDoubleQuotes)
+    else if (ch == '\\' && !inSingleQuotes && !inDoubleQuotes)
     {
       wordStarted = true;
 
@@ -30,18 +59,21 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
         word += input[++i];
       }
     }
+
     else if (ch == '\'' && !inDoubleQuotes)
     {
       // Change quote state without adding the quote to the argument.
       inSingleQuotes = !inSingleQuotes;
       wordStarted = true;
     }
+
     else if (ch == '"' && !inSingleQuotes)
     {
       //Handle double quotes outside single quotes
       inDoubleQuotes = !inDoubleQuotes;
       wordStarted = true;
     }
+
     else if (std::isspace(static_cast<unsigned char>(ch)) && !inSingleQuotes && !inDoubleQuotes)
     {
       // Only whitespace outside quotes separates arguments.
@@ -52,6 +84,7 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
         wordStarted = false;
       }
     }
+
     else
     {
       word += ch;
@@ -64,6 +97,7 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
     std::cerr << "Unclosed single quote\n";
     return false;
   }
+
   if (inDoubleQuotes)
   {
     std::cerr << "Unclosed double quote\n";
@@ -103,6 +137,7 @@ int main()
     {
       break;
     }
+
     else if (input.substr(0, 5) == "type ") // type command
     {
       std::string command = input.substr(5);
@@ -147,6 +182,7 @@ int main()
         std::cout << command << ": not found\n";
       }
     }
+
     else if (args[0] == "echo") // echo command
     {
       for (std::size_t i = 1; i < args.size(); ++i)
@@ -161,6 +197,7 @@ int main()
 
       std::cout << '\n';
     }
+
     else if (input == "pwd") // pwd command
     {
       char* cwd = getcwd(nullptr, 0);
@@ -169,12 +206,14 @@ int main()
       {
         std::perror("pwd");
       }
+
       else
       {
         std::cout << cwd << std::endl;
         std::free(cwd);
       }
     }
+
     else if (input == "cd" || input.substr(0, 3) == "cd ") // cd command
     {
       std::string path = (input == "cd") ? "~" : input.substr(3);
@@ -218,6 +257,7 @@ int main()
         // The child process could not be created.
         std::perror("fork");
       }
+
       else if (pid == 0)
       {
         // Child process: find and execute the program.
@@ -230,6 +270,7 @@ int main()
         {
           std::cerr << args[0] << ": command not found\n";
         }
+
         else
         {
           errno = error;
@@ -238,6 +279,7 @@ int main()
 
         _exit(error == ENOENT ? 127 : 126);
       }
+
       else
       {
         // Parent process: wait for the child to finish.
