@@ -10,6 +10,8 @@
 #include <cerrno>
 #include <cctype>
 
+#include "ui/terminal_ui.hpp"
+
 bool parseArguments(const std::string &input, std::vector<std::string> &args)
 {
   std::string word;
@@ -111,8 +113,84 @@ bool parseArguments(const std::string &input, std::vector<std::string> &args)
   return true;
 }
 
-int main()
+std::string shellQuote(const std::string &value)
 {
+  std::string result = "'";
+
+  for (char ch : value)
+  {
+    if (ch == '\'')
+    {
+      result += "'\\''";
+    }
+    else
+    {
+      result += ch;
+    }
+  }
+
+  result += "'";
+  return result;
+}
+
+std::string escapeAppleScript(const std::string &value)
+{
+  std::string result;
+
+  for (char ch : value)
+  {
+    if (ch == '\\' || ch == '"')
+    {
+      result += '\\';
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
+
+int main(int argc, char* argv[])
+{
+
+  // Internal mode: render FTXUI inside the new Terminal window.
+  if (argc == 2 && std::string(argv[1]) == "--ui-internal")
+  {
+    return runTerminalUI();
+  }
+
+  // Public UI mode: open a separate macOS Terminal window.
+  if (argc == 2 && std::string(argv[1]) == "--ui")
+  {
+    const std::string workingDirectory = std::filesystem::current_path().string();
+
+    const std::string executable = std::filesystem::absolute(argv[0]).string();
+
+    const std::string command =
+        "cd " + shellQuote(workingDirectory) +
+        " && exec " + shellQuote(executable) +
+        " --ui-internal";
+
+    const std::string appleScript =
+        "tell application \"Terminal\"\n"
+        "    activate\n"
+        "    do script \"" +
+        escapeAppleScript(command) + "\"\n"
+        "end tell";
+
+    execl(
+        "/usr/bin/osascript",
+        "osascript",
+        "-e",
+        appleScript.c_str(),
+        static_cast<char *>(nullptr));
+
+    // Reached only if osascript could not be started.
+    std::perror("Failed to launch macOS Terminal");
+    return 1;
+  }
+
+  // Original CodeCrafters shell starts here.
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
 
