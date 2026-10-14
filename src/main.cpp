@@ -2,195 +2,348 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <unistd.h>
 #include <vector>
-#include <cstdio>
-#include <sys/wait.h>
-#include <filesystem>
-#include <cerrno>
 #include <cctype>
+#include <unistd.h>
+#include <filesystem>
+#include <system_error>
 
-#include "ui/terminal_ui.hpp"
+#include "ui/desktop_ui.hpp"
+#include "command_executor.hpp"
 
-bool parseArguments(const std::string &input, std::vector<std::string> &args)
+    namespace
 {
-  std::string word;
-  bool inSingleQuotes = false;
-  bool inDoubleQuotes = false;
-  bool wordStarted = false;
 
-  for (std::size_t i = 0; i < input.size(); ++i)
+  // Parse input into arguments while supporting single quotes,
+  // double quotes, and backslash escaping.
+  bool parseArguments(
+      const std::string &input,
+      std::vector<std::string> &args,
+      std::string &error)
   {
-    char ch = input[i];
+    std::string word;
+    bool inSingleQuotes = false;
+    bool inDoubleQuotes = false;
+    bool wordStarted = false;
 
-    // Backlash handling inside double quotes
-    if (ch == '\\' && inDoubleQuotes)
+    for (std::size_t i = 0; i < input.size(); ++i)
     {
-      if (i + 1 < input.size())
-      {
-        char next = input[i + 1];
+      char ch = input[i];
 
-        // Inside double quotes, only these characters are escaped in this stage: " and \.
-        if (next == '"' || next == '\\')
+      // Backslash handling inside double quotes.
+      if (ch == '\\' && inDoubleQuotes)
+      {
+        if (i + 1 < input.size())
         {
-          word += next;
-          ++i;
+          char next = input[i + 1];
+
+          if (next == '"' || next == '\\')
+          {
+            word += next;
+            ++i;
+          }
+          else
+          {
+            word += ch;
+          }
+        }
+        else
+        {
+          word += ch;
         }
 
-        // Preserve the backslash for other characters.
-        else {
+        wordStarted = true;
+      }
+
+      // Backslash escaping outside quotes.
+      else if (ch == '\\' && !inSingleQuotes && !inDoubleQuotes)
+      {
+        wordStarted = true;
+
+        if (i + 1 < input.size())
+        {
+          word += input[++i];
+        }
+        else
+        {
           word += ch;
         }
       }
 
-      else 
+      // Single quotes.
+      else if (ch == '\'' && !inDoubleQuotes)
+      {
+        inSingleQuotes = !inSingleQuotes;
+        wordStarted = true;
+      }
+
+      // Double quotes.
+      else if (ch == '"' && !inSingleQuotes)
+      {
+        inDoubleQuotes = !inDoubleQuotes;
+        wordStarted = true;
+      }
+
+      // Whitespace separates arguments only outside quotes.
+      else if (
+          std::isspace(static_cast<unsigned char>(ch)) &&
+          !inSingleQuotes &&
+          !inDoubleQuotes)
+      {
+        if (wordStarted)
+        {
+          args.push_back(word);
+          word.clear();
+          wordStarted = false;
+        }
+      }
+
+      else
       {
         word += ch;
-      }
-
-      wordStarted = true;
-    }
-
-    // Handle backlash escaping outside both types of quotes
-    else if (ch == '\\' && !inSingleQuotes && !inDoubleQuotes)
-    {
-      wordStarted = true;
-
-      if (i + 1 < input.size())
-      {
-        word += input[++i];
+        wordStarted = true;
       }
     }
 
-    else if (ch == '\'' && !inDoubleQuotes)
+    if (inSingleQuotes)
     {
-      // Change quote state without adding the quote to the argument.
-      inSingleQuotes = !inSingleQuotes;
-      wordStarted = true;
+      error = "Unclosed single quote\n";
+      return false;
     }
 
-    else if (ch == '"' && !inSingleQuotes)
+    if (inDoubleQuotes)
     {
-      //Handle double quotes outside single quotes
-      inDoubleQuotes = !inDoubleQuotes;
-      wordStarted = true;
+      error = "Unclosed double quote\n";
+      return false;
     }
 
-    else if (std::isspace(static_cast<unsigned char>(ch)) && !inSingleQuotes && !inDoubleQuotes)
+    if (wordStarted)
     {
-      // Only whitespace outside quotes separates arguments.
-      if (wordStarted)
-      {
-        args.push_back(word);
-        word.clear();
-        wordStarted = false;
-      }
+      args.push_back(word);
     }
 
-    else
-    {
-      word += ch;
-      wordStarted = true;
-    }
+    return true;
   }
 
-  if (inSingleQuotes)
+  // Check whether a command is one of our implemented built-ins.
+  bool isBuiltin(const std::string &command)
   {
-    std::cerr << "Unclosed single quote\n";
+    return command == "exit" ||
+           command == "echo" ||
+           command == "pwd" ||
+           command == "cd" ||
+           command == "type";
+  }
+
+  // Find an executable using PATH without executing it.
+  bool findExecutable(
+      const std::string &command,
+      std::string &executablePath)
+  {
+    const char *pathvar = std::getenv("PATH");
+
+    if (pathvar == nullptr)
+    {
+      return false;
+    }
+
+    std::istringstream pathStream(pathvar);
+    std::string directory;
+
+    while (std::getline(pathStream, directory, ':'))
+    {
+      // An empty PATH entry represents the current directory.
+      if (directory.empty())
+      {
+        directory = ".";
+      }
+
+      std::string candidate =
+          (std::filesystem::path(directory) / command).string();
+
+      if (access(candidate.c_str(), X_OK) == 0)
+      {
+        executablePath = candidate;
+        return true;
+      }
+    }
+
     return false;
   }
 
-  if (inDoubleQuotes)
-  {
-    std::cerr << "Unclosed double quote\n";
-  }
+} // namespace
 
-  if (wordStarted)
-  {
-    args.push_back(word);
-  }
-
-  return true;
-}
-
-std::string shellQuote(const std::string &value)
+// Shared command execution logic.
+// Used by the CLI, terminal UI, and desktop UI.
+CommandResult executeCommand(const std::string &input)
 {
-  std::string result = "'";
+  CommandResult result;
+  std::vector<std::string> args;
+  std::string parseError;
 
-  for (char ch : value)
+  if (!parseArguments(input, args, parseError))
   {
-    if (ch == '\'')
+    result.error = parseError;
+    return result;
+  }
+
+  if (args.empty())
+  {
+    return result;
+  }
+
+  const std::string &command = args[0];
+
+  // exit
+  if (command == "exit")
+  {
+    if (args.size() > 2)
     {
-      result += "'\\''";
+      result.error = "exit: too many arguments\n";
+      return result;
+    }
+
+    result.should_exit = true;
+    return result;
+  }
+
+  // echo
+  if (command == "echo")
+  {
+    for (std::size_t i = 1; i < args.size(); ++i)
+    {
+      if (i > 1)
+      {
+        result.output += ' ';
+      }
+
+      result.output += args[i];
+    }
+
+    result.output += '\n';
+    return result;
+  }
+
+  // pwd
+  if (command == "pwd")
+  {
+    if (args.size() > 1)
+    {
+      result.error = "pwd: too many arguments\n";
+      return result;
+    }
+
+    std::error_code ec;
+    auto cwd = std::filesystem::current_path(ec);
+
+    if (ec)
+    {
+      result.error = "pwd: " + ec.message() + "\n";
     }
     else
     {
-      result += ch;
+      result.output = cwd.string() + '\n';
     }
+
+    return result;
   }
 
-  result += "'";
-  return result;
-}
-
-std::string escapeAppleScript(const std::string &value)
-{
-  std::string result;
-
-  for (char ch : value)
+  // cd
+  if (command == "cd")
   {
-    if (ch == '\\' || ch == '"')
+    if (args.size() > 2)
     {
-      result += '\\';
+      result.error = "cd: too many arguments\n";
+      return result;
     }
 
-    result += ch;
+    std::string path;
+
+    if (args.size() == 1 || args[1] == "~")
+    {
+      const char *home = std::getenv("HOME");
+
+      if (home == nullptr)
+      {
+        result.error = "cd: HOME not set\n";
+        return result;
+      }
+
+      path = home;
+    }
+    else
+    {
+      path = args[1];
+
+      // Expand ~/ at the beginning of the path.
+      if (path.rfind("~/", 0) == 0)
+      {
+        const char *home = std::getenv("HOME");
+
+        if (home == nullptr)
+        {
+          result.error = "cd: HOME not set\n";
+          return result;
+        }
+
+        path = std::string(home) + path.substr(1);
+      }
+    }
+
+    if (chdir(path.c_str()) != 0)
+    {
+      result.error = "cd: " + path + ": directory change failed\n";
+    }
+
+    return result;
   }
 
+  // type
+  if (command == "type")
+  {
+    if (args.size() != 2)
+    {
+      result.error = "type: expected one argument\n";
+      return result;
+    }
+
+    const std::string &target = args[1];
+
+    if (isBuiltin(target))
+    {
+      result.output = target + " is a shell builtin\n";
+      return result;
+    }
+
+    std::string executablePath;
+
+    if (findExecutable(target, executablePath))
+    {
+      result.output = target + " is " + executablePath + "\n";
+    }
+    else
+    {
+      result.error = target + ": not found\n";
+    }
+
+    return result;
+  }
+
+  // Unknown commands are never executed.
+  result.error = command + ": command not implemented\n";
   return result;
 }
 
-int main(int argc, char* argv[])
+// Application entry point.
+int main(int argc, char *argv[])
 {
-
-  // Internal mode: render FTXUI inside the new Terminal window.
-  if (argc == 2 && std::string(argv[1]) == "--ui-internal")
-  {
-    return runTerminalUI();
-  }
-
-  // Public UI mode: open a separate macOS Terminal window.
+  // Desktop GUI.
   if (argc == 2 && std::string(argv[1]) == "--ui")
   {
-    const std::string workingDirectory = std::filesystem::current_path().string();
-
-    const std::string executable = std::filesystem::absolute(argv[0]).string();
-
-    const std::string command =
-        "cd " + shellQuote(workingDirectory) +
-        " && exec " + shellQuote(executable) +
-        " --ui-internal";
-
-    const std::string appleScript =
-        "tell application \"Terminal\"\n"
-        "    activate\n"
-        "    do script \"" +
-        escapeAppleScript(command) + "\"\n"
-        "end tell";
-
-    execl(
-        "/usr/bin/osascript",
-        "osascript",
-        "-e",
-        appleScript.c_str(),
-        static_cast<char *>(nullptr));
-
-    // Reached only if osascript could not be started.
-    std::perror("Failed to launch macOS Terminal");
-    return 1;
+    return runDesktopUI(argc, argv);
   }
 
-  // Original CodeCrafters shell starts here.
+  // Default: regular command-line shell.
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
 
@@ -199,177 +352,27 @@ int main(int argc, char* argv[])
     std::cout << "$ ";
 
     std::string input;
+
     if (!std::getline(std::cin, input))
     {
       break;
     }
 
-    std::vector<std::string> args;
+    CommandResult result = executeCommand(input);
 
-    if (!parseArguments(input, args) || args.empty())
+    if (!result.output.empty())
     {
-      continue;
+      std::cout << result.output;
     }
 
-    if (input == "exit") // exit command
+    if (!result.error.empty())
+    {
+      std::cerr << result.error;
+    }
+
+    if (result.should_exit)
     {
       break;
-    }
-
-    else if (input.substr(0, 5) == "type ") // type command
-    {
-      std::string command = input.substr(5);
-
-      if (command == "echo" || command == "type" || 
-          command == "exit" || command == "pwd" ||
-          command == "cd")
-      {
-        std::cout << command << " is a shell builtin\n";
-        continue;
-      }
-
-      bool found = false;
-      const char *pathvar = std::getenv("PATH");
-
-      if (pathvar != nullptr)
-      {
-        std::istringstream path_stream(pathvar);
-        std::string directory;
-
-        while (std::getline(path_stream, directory, ':'))
-        {
-          // An empty PATH entry represents the current directory.
-          if (directory.empty())
-          {
-            directory = ".";
-          }
-
-          std::string filepath = directory + "/" + command;
-
-          if (access(filepath.c_str(), X_OK) == 0)
-          {
-            std::cout << command << " is " << filepath << '\n';
-            found = true;
-            break;
-          }
-        }
-      }
-
-      if (!found)
-      {
-        std::cout << command << ": not found\n";
-      }
-    }
-
-    else if (args[0] == "echo") // echo command
-    {
-      for (std::size_t i = 1; i < args.size(); ++i)
-      {
-        if (i > 1)
-        {
-          std::cout << ' ';
-        }
-
-        std::cout << args[i];
-      }
-
-      std::cout << '\n';
-    }
-
-    else if (input == "pwd") // pwd command
-    {
-      char* cwd = getcwd(nullptr, 0);
-
-      if (cwd == nullptr)
-      {
-        std::perror("pwd");
-      }
-
-      else
-      {
-        std::cout << cwd << std::endl;
-        std::free(cwd);
-      }
-    }
-
-    else if (input == "cd" || input.substr(0, 3) == "cd ") // cd command
-    {
-      std::string path = (input == "cd") ? "~" : input.substr(3);
-
-      if (path == "~" || path.substr(0, 2) == "~/")
-      {
-        const char *home = std::getenv("HOME");
-
-        if (home == nullptr)
-        {
-          std::cerr << "cd: HOME not set\n";
-          continue;
-        }
-
-        path = std::string(home) + path.substr(1);
-      }
-
-      // Change directory only once.
-      if (chdir(path.c_str()) == -1)
-      {
-        std::perror(("cd: " + path).c_str());
-      }
-    }
-
-    else
-    {
-      // Use the arguments already parsed above.
-      std::vector<char *> argv;
-
-      for (std::string &arg : args)
-      {
-        argv.push_back(arg.data());
-      }
-      
-      argv.push_back(nullptr);
-
-      pid_t pid = fork();
-
-      if (pid == -1)
-      {
-        // The child process could not be created.
-        std::perror("fork");
-      }
-
-      else if (pid == 0)
-      {
-        // Child process: find and execute the program.
-        execvp(argv[0], argv.data());
-
-        // This code runs only if execvp fails.
-        int error = errno;
-
-        if (error == ENOENT)
-        {
-          std::cerr << args[0] << ": command not found\n";
-        }
-
-        else
-        {
-          errno = error;
-          std::perror(args[0].c_str());
-        }
-
-        _exit(error == ENOENT ? 127 : 126);
-      }
-
-      else
-      {
-        // Parent process: wait for the child to finish.
-        while (waitpid(pid, nullptr, 0) == -1)
-        {
-          if (errno != EINTR)
-          {
-            std::perror("waitpid");
-            break;
-          }
-        }
-      }
     }
   }
 

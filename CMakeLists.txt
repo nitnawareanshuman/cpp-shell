@@ -8,11 +8,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ftxui CONFIG REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 add_executable(shell
     src/main.cpp
-    src/shell/shell.cpp
-    src/ui/terminal_ui.cpp
+    src/ui/desktop_ui.cpp
 )
 
 target_include_directories(shell PRIVATE
@@ -23,4 +23,5 @@ target_link_libraries(shell PRIVATE
     ftxui::screen
     ftxui::dom
     ftxui::component
+    Qt6::Widgets
 )
