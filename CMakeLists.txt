@@ -66,4 +66,6 @@ target_include_directories(shell_integration_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
 )
 target_link_libraries(shell_integration_tests PRIVATE shell_engine)
+target_compile_definitions(shell_integration_tests PRIVATE CPP_SHELL_BIN="$<TARGET_FILE:cpp-shell>")
+add_dependencies(shell_integration_tests cpp-shell)
 add_test(NAME shell_integration_tests COMMAND shell_integration_tests)

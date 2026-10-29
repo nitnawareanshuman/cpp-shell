@@ -154,6 +154,10 @@ void restore_stdio(SavedStdio &saved) {
   if (saved.err.valid()) {
     ::dup2(saved.err.get(), STDERR_FILENO);
   }
+  // Close the saved copies so they cannot keep a capture pipe open.
+  saved.in.reset();
+  saved.out.reset();
+  saved.err.reset();
 }
 
 bool expand_pipeline(const Pipeline &pipeline, ShellState &state,
@@ -184,17 +188,6 @@ bool expand_pipeline(const Pipeline &pipeline, ShellState &state,
     out.push_back(std::move(expanded));
   }
   return true;
-}
-
-std::string join_argv(const std::vector<std::string> &argv) {
-  std::ostringstream oss;
-  for (std::size_t i = 0; i < argv.size(); ++i) {
-    if (i != 0) {
-      oss << ' ';
-    }
-    oss << argv[i];
-  }
-  return oss.str();
 }
 
 int parse_job_id(const std::string &text, bool &ok) {
@@ -444,10 +437,13 @@ void exec_child(const ExpandedCommand &command) {
   } else {
     ::execvp(command.argv[0].c_str(), args.data());
   }
+  const bool not_found =
+      errno == ENOENT && command.argv[0].find('/') == std::string::npos;
   const std::string message =
-      command.argv[0] + ": " + std::strerror(errno) + "\n";
+      command.argv[0] + ": " +
+      (not_found ? "command not found" : std::strerror(errno)) + "\n";
   write_fd(STDERR_FILENO, message);
-  _exit(127);
+  _exit(errno == EACCES ? 126 : 127);
 }
 
 void give_terminal(pid_t pgid) {

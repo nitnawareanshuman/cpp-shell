@@ -2,7 +2,17 @@
 
 #include <iostream>
 #include <string>
+#include <type_traits>
 #include <utility>
+
+template <typename T>
+void print_value(std::ostream &os, const T &value) {
+  if constexpr (std::is_enum_v<T>) {
+    os << static_cast<long long>(value);
+  } else {
+    os << value;
+  }
+}
 
 struct TestStats {
   int passed = 0;
@@ -33,8 +43,11 @@ inline void check_eq_impl(const A &left, const B &right, const char *left_expr,
   }
   ++test_stats().failed;
   std::cerr << "CHECK_EQ failed at " << file << ":" << line << "\n  "
-            << left_expr << " == " << right_expr << "\n  left : " << left
-            << "\n  right: " << right << "\n";
+            << left_expr << " == " << right_expr << "\n  left : ";
+  print_value(std::cerr, left);
+  std::cerr << "\n  right: ";
+  print_value(std::cerr, right);
+  std::cerr << "\n";
 }
 
 #define CHECK(cond) check_impl(static_cast<bool>(cond), #cond, __FILE__, __LINE__)
