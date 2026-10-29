@@ -1,380 +1,79 @@
-#include <cstdlib>
-#include <iostream>
-#include <sstream>
-#include <string>
-#include <vector>
-#include <cctype>
+#include "shell/dashboard.hpp"
+#include "shell/executor.hpp"
+#include "shell/line_editor.hpp"
+
 #include <unistd.h>
-#include <filesystem>
-#include <system_error>
 
-#include "ui/desktop_ui.hpp"
-#include "command_executor.hpp"
+#include <iostream>
+#include <string>
 
-    namespace
-{
+namespace {
 
-  // Parse input into arguments while supporting single quotes,
-  // double quotes, and backslash escaping.
-  bool parseArguments(
-      const std::string &input,
-      std::vector<std::string> &args,
-      std::string &error)
-  {
-    std::string word;
-    bool inSingleQuotes = false;
-    bool inDoubleQuotes = false;
-    bool wordStarted = false;
-
-    for (std::size_t i = 0; i < input.size(); ++i)
-    {
-      char ch = input[i];
-
-      // Backslash handling inside double quotes.
-      if (ch == '\\' && inDoubleQuotes)
-      {
-        if (i + 1 < input.size())
-        {
-          char next = input[i + 1];
-
-          if (next == '"' || next == '\\')
-          {
-            word += next;
-            ++i;
-          }
-          else
-          {
-            word += ch;
-          }
-        }
-        else
-        {
-          word += ch;
-        }
-
-        wordStarted = true;
-      }
-
-      // Backslash escaping outside quotes.
-      else if (ch == '\\' && !inSingleQuotes && !inDoubleQuotes)
-      {
-        wordStarted = true;
-
-        if (i + 1 < input.size())
-        {
-          word += input[++i];
-        }
-        else
-        {
-          word += ch;
-        }
-      }
-
-      // Single quotes.
-      else if (ch == '\'' && !inDoubleQuotes)
-      {
-        inSingleQuotes = !inSingleQuotes;
-        wordStarted = true;
-      }
-
-      // Double quotes.
-      else if (ch == '"' && !inSingleQuotes)
-      {
-        inDoubleQuotes = !inDoubleQuotes;
-        wordStarted = true;
-      }
-
-      // Whitespace separates arguments only outside quotes.
-      else if (
-          std::isspace(static_cast<unsigned char>(ch)) &&
-          !inSingleQuotes &&
-          !inDoubleQuotes)
-      {
-        if (wordStarted)
-        {
-          args.push_back(word);
-          word.clear();
-          wordStarted = false;
-        }
-      }
-
-      else
-      {
-        word += ch;
-        wordStarted = true;
-      }
-    }
-
-    if (inSingleQuotes)
-    {
-      error = "Unclosed single quote\n";
-      return false;
-    }
-
-    if (inDoubleQuotes)
-    {
-      error = "Unclosed double quote\n";
-      return false;
-    }
-
-    if (wordStarted)
-    {
-      args.push_back(word);
-    }
-
-    return true;
-  }
-
-  // Check whether a command is one of our implemented built-ins.
-  bool isBuiltin(const std::string &command)
-  {
-    return command == "exit" ||
-           command == "echo" ||
-           command == "pwd" ||
-           command == "cd" ||
-           command == "type";
-  }
-
-  // Find an executable using PATH without executing it.
-  bool findExecutable(
-      const std::string &command,
-      std::string &executablePath)
-  {
-    const char *pathvar = std::getenv("PATH");
-
-    if (pathvar == nullptr)
-    {
-      return false;
-    }
-
-    std::istringstream pathStream(pathvar);
-    std::string directory;
-
-    while (std::getline(pathStream, directory, ':'))
-    {
-      // An empty PATH entry represents the current directory.
-      if (directory.empty())
-      {
-        directory = ".";
-      }
-
-      std::string candidate =
-          (std::filesystem::path(directory) / command).string();
-
-      if (access(candidate.c_str(), X_OK) == 0)
-      {
-        executablePath = candidate;
-        return true;
-      }
-    }
-
-    return false;
-  }
+void print_usage() {
+  std::cout
+      << "cpp-shell — a POSIX-inspired command shell with an FTXUI dashboard\n"
+      << "\nUsage:\n"
+      << "  cpp-shell              Start the interactive CLI\n"
+      << "  cpp-shell --ui         Start the FTXUI dashboard\n"
+      << "  cpp-shell --dashboard  Same as --ui\n"
+      << "  cpp-shell --help       Show this help\n";
+}
 
 } // namespace
 
-// Shared command execution logic.
-// Used by the CLI, terminal UI, and desktop UI.
-CommandResult executeCommand(const std::string &input)
-{
-  CommandResult result;
-  std::vector<std::string> args;
-  std::string parseError;
+int main(int argc, char *argv[]) {
+  shell::Shell sh;
+  shell::ExecOptions options;
+  options.interactive_tty = ::isatty(STDIN_FILENO) != 0;
 
-  if (!parseArguments(input, args, parseError))
-  {
-    result.error = parseError;
-    return result;
-  }
-
-  if (args.empty())
-  {
-    return result;
-  }
-
-  const std::string &command = args[0];
-
-  // exit
-  if (command == "exit")
-  {
-    if (args.size() > 2)
-    {
-      result.error = "exit: too many arguments\n";
-      return result;
+  if (argc >= 2) {
+    const std::string arg = argv[1];
+    if (arg == "--help" || arg == "-h") {
+      print_usage();
+      return 0;
     }
-
-    result.should_exit = true;
-    return result;
-  }
-
-  // echo
-  if (command == "echo")
-  {
-    for (std::size_t i = 1; i < args.size(); ++i)
-    {
-      if (i > 1)
-      {
-        result.output += ' ';
+    if (arg == "--ui" || arg == "--dashboard") {
+      return shell::run_dashboard(sh);
+    }
+    if (arg == "--command" || arg == "-c") {
+      if (argc < 3) {
+        std::cerr << "cpp-shell: -c requires a command string\n";
+        return 2;
       }
-
-      result.output += args[i];
+      options.capture_output = false;
+      const auto result = sh.execute(argv[2], options);
+      std::cout << result.output;
+      std::cerr << result.error;
+      return result.exit_status;
     }
-
-    result.output += '\n';
-    return result;
+    std::cerr << "cpp-shell: unknown argument " << arg << "\n";
+    print_usage();
+    return 2;
   }
 
-  // pwd
-  if (command == "pwd")
-  {
-    if (args.size() > 1)
-    {
-      result.error = "pwd: too many arguments\n";
-      return result;
-    }
-
-    std::error_code ec;
-    auto cwd = std::filesystem::current_path(ec);
-
-    if (ec)
-    {
-      result.error = "pwd: " + ec.message() + "\n";
-    }
-    else
-    {
-      result.output = cwd.string() + '\n';
-    }
-
-    return result;
-  }
-
-  // cd
-  if (command == "cd")
-  {
-    if (args.size() > 2)
-    {
-      result.error = "cd: too many arguments\n";
-      return result;
-    }
-
-    std::string path;
-
-    if (args.size() == 1 || args[1] == "~")
-    {
-      const char *home = std::getenv("HOME");
-
-      if (home == nullptr)
-      {
-        result.error = "cd: HOME not set\n";
-        return result;
-      }
-
-      path = home;
-    }
-    else
-    {
-      path = args[1];
-
-      // Expand ~/ at the beginning of the path.
-      if (path.rfind("~/", 0) == 0)
-      {
-        const char *home = std::getenv("HOME");
-
-        if (home == nullptr)
-        {
-          result.error = "cd: HOME not set\n";
-          return result;
-        }
-
-        path = std::string(home) + path.substr(1);
-      }
-    }
-
-    if (chdir(path.c_str()) != 0)
-    {
-      result.error = "cd: " + path + ": directory change failed\n";
-    }
-
-    return result;
-  }
-
-  // type
-  if (command == "type")
-  {
-    if (args.size() != 2)
-    {
-      result.error = "type: expected one argument\n";
-      return result;
-    }
-
-    const std::string &target = args[1];
-
-    if (isBuiltin(target))
-    {
-      result.output = target + " is a shell builtin\n";
-      return result;
-    }
-
-    std::string executablePath;
-
-    if (findExecutable(target, executablePath))
-    {
-      result.output = target + " is " + executablePath + "\n";
-    }
-    else
-    {
-      result.error = target + ": not found\n";
-    }
-
-    return result;
-  }
-
-  // Unknown commands are never executed.
-  result.error = command + ": command not implemented\n";
-  return result;
-}
-
-// Application entry point.
-int main(int argc, char *argv[])
-{
-  // Desktop GUI.
-  if (argc == 2 && std::string(argv[1]) == "--ui")
-  {
-    return runDesktopUI(argc, argv);
-  }
-
-  // Default: regular command-line shell.
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
 
-  while (true)
-  {
-    std::cout << "$ ";
-
+  shell::LineEditor editor(sh);
+  int exit_code = 0;
+  while (true) {
     std::string input;
-
-    if (!std::getline(std::cin, input))
-    {
+    bool eof = false;
+    if (!editor.read_line("$ ", input, eof)) {
       break;
     }
 
-    CommandResult result = executeCommand(input);
-
-    if (!result.output.empty())
-    {
+    const auto result = sh.execute(input, options);
+    if (!result.output.empty()) {
       std::cout << result.output;
     }
-
-    if (!result.error.empty())
-    {
+    if (!result.error.empty()) {
       std::cerr << result.error;
     }
-
-    if (result.should_exit)
-    {
+    exit_code = result.exit_status;
+    if (result.should_exit) {
       break;
     }
   }
-
-  return 0;
+  return exit_code;
 }

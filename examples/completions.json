@@ -1,0 +1,18 @@
+{
+  "git": {
+    "args": {
+      "1": ["add", "commit", "checkout", "status", "push", "pull", "log", "diff"]
+    },
+    "files": true
+  },
+  "cd": {
+    "directories_only": true,
+    "files": true
+  },
+  "echo": {
+    "args": {
+      "*": ["hello", "world"]
+    },
+    "files": true
+  }
+}
