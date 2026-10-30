@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(ftxui CONFIG REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 add_library(shell_engine STATIC
     src/core/lexer.cpp
@@ -41,9 +41,7 @@ endif()
 
 target_link_libraries(cpp-shell PRIVATE
     shell_engine
-    ftxui::screen
-    ftxui::dom
-    ftxui::component
+    Qt6::Widgets
 )
 
 enable_testing()

@@ -2,209 +2,216 @@
 #include "shell/completion.hpp"
 #include "shell/executor.hpp"
 
-#include <ftxui/component/component.hpp>
-#include <ftxui/component/component_options.hpp>
-#include <ftxui/component/screen_interactive.hpp>
-#include <ftxui/dom/elements.hpp>
+#include <QApplication>
+#include <QFont>
+#include <QHBoxLayout>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMainWindow>
+#include <QPlainTextEdit>
+#include <QVBoxLayout>
+#include <QWidget>
 
-#include <algorithm>
-#include <chrono>
-#include <ctime>
-#include <sstream>
+#include <functional>
 #include <string>
-#include <vector>
+#include <utility>
 
 namespace shell {
 namespace {
 
-std::string now_string() {
-  const auto now = std::chrono::system_clock::to_time_t(
-      std::chrono::system_clock::now());
-  char buffer[16];
-  std::strftime(buffer, sizeof(buffer), "%H:%M:%S", std::localtime(&now));
-  return buffer;
-}
+class CommandInput final : public QLineEdit {
+public:
+  using KeyHandler = std::function<void(QKeyEvent *)>;
 
-std::vector<std::string> wrap_log(const std::vector<std::string> &lines,
-                                  std::size_t keep) {
-  if (lines.size() <= keep) {
-    return lines;
+  explicit CommandInput(KeyHandler handler, QWidget *parent = nullptr)
+      : QLineEdit(parent), key_handler_(std::move(handler)) {}
+
+  void forwardKeyPressEvent(QKeyEvent *event) {
+    QLineEdit::keyPressEvent(event);
   }
-  return {lines.end() - static_cast<std::ptrdiff_t>(keep), lines.end()};
-}
+
+protected:
+  void keyPressEvent(QKeyEvent *event) override {
+    key_handler_(event);
+  }
+
+private:
+  KeyHandler key_handler_;
+};
+
+class DashboardWindow final : public QMainWindow {
+public:
+  explicit DashboardWindow(Shell &shell) : shell_(shell) {
+    setWindowTitle("cpp-shell");
+    resize(1100, 700);
+    setMinimumSize(650, 400);
+
+    auto *central = new QWidget(this);
+    auto *layout = new QVBoxLayout(central);
+    layout->setContentsMargins(14, 14, 14, 14);
+
+    auto *header = new QHBoxLayout();
+    auto *title = new QLabel(" cpp-shell ", central);
+    title->setStyleSheet(
+        "QLabel { background: #2563eb; color: white; font-weight: bold; "
+        "padding: 5px; }");
+    status_ = new QLabel("ready", central);
+    cwd_ = new QLabel(QString::fromStdString(shell_.state().cwd()), central);
+    header->addWidget(title);
+    header->addWidget(cwd_);
+    header->addStretch();
+    header->addWidget(status_);
+    layout->addLayout(header);
+
+    output_ = new QPlainTextEdit(central);
+    output_->setReadOnly(true);
+    output_->setFont(QFont("Menlo", 13));
+    output_->setStyleSheet(
+        "QPlainTextEdit { background: #080b16; color: #e5e7eb; "
+        "border: none; padding: 8px; }");
+    output_->appendPlainText("cpp-shell dashboard");
+    output_->appendPlainText(
+        "Tab completes, Up/Down history, Ctrl-L clears, Ctrl-D exits.");
+    const std::string load_error = shell_.state().load_completions();
+    if (!load_error.empty()) {
+      output_->appendPlainText(QString::fromStdString(load_error));
+    }
+    layout->addWidget(output_, 1);
+
+    auto *input_layout = new QHBoxLayout();
+    auto *prompt = new QLabel("$", central);
+    prompt->setStyleSheet("QLabel { color: #34d399; font-weight: bold; }");
+    input_ = new CommandInput(
+        [this](QKeyEvent *event) { handleInputKey(event); }, central);
+    input_->setPlaceholderText("Enter a command");
+    input_->setFont(QFont("Menlo", 13));
+    input_->setStyleSheet(
+        "QLineEdit { background: #111827; color: #e5e7eb; border: 1px solid "
+        "#334155; padding: 8px; }");
+    input_layout->addWidget(prompt);
+    input_layout->addWidget(input_, 1);
+    layout->addLayout(input_layout);
+
+    jobs_ = new QLabel(central);
+    jobs_->setStyleSheet("QLabel { color: #94a3b8; }");
+    layout->addWidget(jobs_);
+
+    setCentralWidget(central);
+    refreshJobs();
+    input_->setFocus();
+  }
+
+private:
+  void handleInputKey(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+      runLine(input_->text().trimmed().toStdString());
+      return;
+    }
+    if (event->key() == Qt::Key_Tab) {
+      const auto completed =
+          shell_.state().completer().complete(input_->text().toStdString(),
+                                              input_->cursorPosition());
+      if (completed.applied) {
+        input_->setText(QString::fromStdString(completed.line));
+        input_->setCursorPosition(completed.cursor);
+      } else if (!completed.display.empty()) {
+        appendOutput(completed.display);
+      }
+      return;
+    }
+    if (event->key() == Qt::Key_Up) {
+      const auto line = shell_.state().history().up(input_->text().toStdString());
+      input_->setText(QString::fromStdString(line));
+      input_->end(false);
+      return;
+    }
+    if (event->key() == Qt::Key_Down) {
+      const auto line =
+          shell_.state().history().down(input_->text().toStdString());
+      input_->setText(QString::fromStdString(line));
+      input_->end(false);
+      return;
+    }
+    if (event->key() == Qt::Key_L &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+      output_->clear();
+      return;
+    }
+    if (event->key() == Qt::Key_D &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+      close();
+      return;
+    }
+    input_->forwardKeyPressEvent(event);
+  }
+
+  void runLine(const std::string &command) {
+    input_->clear();
+    if (command.empty()) {
+      return;
+    }
+
+    appendOutput("$ " + command);
+    status_->setText("running");
+
+    ExecOptions options;
+    options.capture_output = true;
+    options.interactive_tty = false;
+    const ExecResult result = shell_.execute(command, options);
+    if (!result.output.empty()) {
+      appendOutput(result.output);
+    }
+    if (!result.error.empty()) {
+      appendOutput(result.error);
+    }
+    status_->setText(
+        QString("exit %1").arg(QString::number(result.exit_status)));
+    cwd_->setText(QString::fromStdString(shell_.state().cwd()));
+    refreshJobs();
+    shell_.state().history().reset_cursor();
+
+    if (result.should_exit) {
+      close();
+    }
+  }
+
+  void appendOutput(const std::string &text) {
+    output_->appendPlainText(QString::fromStdString(text));
+  }
+
+  void refreshJobs() {
+    const auto notices = shell_.state().jobs().reap();
+    for (const auto &notice : notices) {
+      appendOutput(notice);
+    }
+    const auto jobs = shell_.state().jobs().format_list();
+    jobs_->setText(jobs.empty()
+                       ? "Jobs: none"
+                       : QString("Jobs: %1").arg(
+                             QString::fromStdString(jobs.front())));
+  }
+
+  Shell &shell_;
+  QPlainTextEdit *output_ = nullptr;
+  CommandInput *input_ = nullptr;
+  QLabel *status_ = nullptr;
+  QLabel *cwd_ = nullptr;
+  QLabel *jobs_ = nullptr;
+};
 
 } // namespace
 
 int run_dashboard(Shell &shell) {
-  using namespace ftxui;
+  int argc = 1;
+  char application_name[] = "cpp-shell";
+  char *argv[] = {application_name, nullptr};
+  QApplication app(argc, argv);
+  app.setApplicationName("cpp-shell");
 
-  std::string input;
-  int cursor = 0;
-  std::vector<std::string> log{"cpp-shell dashboard",
-                               "Tab completes, Up/Down history, Ctrl-D exits."};
-  std::string status = "ready";
-  std::string completions_status;
-  bool running = true;
-
-  ExecOptions options;
-  options.capture_output = true;
-  options.interactive_tty = false;
-
-  const std::string load_error = shell.state().load_completions();
-  if (!load_error.empty()) {
-    log.push_back(load_error);
-  }
-
-  auto append_log = [&](const std::string &text) {
-    std::istringstream stream(text);
-    std::string line;
-    while (std::getline(stream, line)) {
-      log.push_back(line);
-    }
-    log = wrap_log(log, 400);
-  };
-
-  auto run_line = [&](const std::string &command) {
-    if (command.empty()) {
-      return;
-    }
-    append_log("$ " + command);
-    status = "running";
-    const ExecResult result = shell.execute(command, options);
-    if (!result.output.empty()) {
-      append_log(result.output);
-    }
-    if (!result.error.empty()) {
-      append_log(result.error);
-    }
-    status = "exit " + std::to_string(result.exit_status);
-    if (result.should_exit) {
-      running = false;
-    }
-    for (const auto &notice : shell.state().jobs().reap()) {
-      append_log(notice);
-    }
-  };
-
-  InputOption option = InputOption::Default();
-  option.multiline = false;
-  option.cursor_position = &cursor;
-  option.on_enter = [&] {
-    const std::string command = input;
-    input.clear();
-    cursor = 0;
-    completions_status.clear();
-    shell.state().history().reset_cursor();
-    run_line(command);
-  };
-
-  Component input_box = Input(&input, "command", option);
-
-  auto screen = ScreenInteractive::Fullscreen();
-
-  input_box |= CatchEvent([&](Event event) {
-    if (event == Event::Escape) {
-      input.clear();
-      cursor = 0;
-      return true;
-    }
-    if (event == Event::ArrowUp) {
-      input = shell.state().history().up(input);
-      cursor = static_cast<int>(input.size());
-      return true;
-    }
-    if (event == Event::ArrowDown) {
-      input = shell.state().history().down(input);
-      cursor = static_cast<int>(input.size());
-      return true;
-    }
-    if (event == Event::Tab) {
-      auto completed = shell.state().completer().complete(input, cursor);
-      if (completed.applied) {
-        input = completed.line;
-        cursor = completed.cursor;
-        completions_status.clear();
-      } else {
-        completions_status = completed.display.empty()
-                                 ? "no completions"
-                                 : completed.display;
-      }
-      return true;
-    }
-    if (event == Event::Character('\x04')) {
-      running = false;
-      screen.Exit();
-      return true;
-    }
-    if (event == Event::Character('\x03')) {
-      input.clear();
-      cursor = 0;
-      status = "interrupted";
-      return true;
-    }
-    if (event == Event::Character('\x0c')) {
-      log.clear();
-      return true;
-    }
-    return false;
-  });
-
-  auto renderer = Renderer(input_box, [&] {
-    shell.state().jobs().reap();
-    if (!running) {
-      screen.Exit();
-    }
-
-    Elements output_elements;
-    for (const auto &line : wrap_log(log, 80)) {
-      output_elements.push_back(text(line));
-    }
-    if (output_elements.empty()) {
-      output_elements.push_back(text(""));
-    }
-
-    Elements job_elements;
-    const auto jobs = shell.state().jobs().format_list();
-    if (jobs.empty()) {
-      job_elements.push_back(text("No jobs") | dim);
-    } else {
-      for (const auto &job : jobs) {
-        job_elements.push_back(text(job));
-      }
-    }
-
-    return vbox({
-               hbox({text(" cpp-shell ") | bold | inverted,
-                     text("  " + shell.state().cwd()) | color(Color::Cyan),
-                     filler(),
-                     text(" " + status + "  " + now_string() + " ") | dim}),
-               separator(),
-               hbox({
-                   vbox({text("Output") | bold,
-                         separator(),
-                         vbox(std::move(output_elements)) | yframe |
-                             vscroll_indicator | flex}) |
-                       flex,
-                   separator(),
-                   vbox({text("Jobs") | bold, separator(),
-                         vbox(std::move(job_elements)) | yframe | flex}) |
-                       size(WIDTH, EQUAL, 36),
-               }) |
-                   flex,
-               separator(),
-               text(completions_status.empty()
-                        ? "Tab: complete   Up/Down: history   Ctrl-L: clear   "
-                          "Ctrl-D: exit"
-                        : completions_status) |
-                   dim,
-               hbox({text("$ ") | color(Color::Green), input_box->Render()}) |
-                   border,
-           }) |
-           border;
-  });
-
-  screen.Loop(renderer);
-  return 0;
+  DashboardWindow window(shell);
+  window.show();
+  return app.exec();
 }
 
 } // namespace shell
