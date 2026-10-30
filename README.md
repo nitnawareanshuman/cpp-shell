@@ -1,34 +1,114 @@
-[![progress-banner](https://backend.codecrafters.io/progress/shell/678aec6f-1a2c-4fdd-84ed-95654369f3d1)](https://app.codecrafters.io/users/nitnawareanshuman?r=2qF)
+# cpp-shell
 
-This is a starting point for C++ solutions to the
-["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview).
+A small Unix shell written in C++23, with an optional terminal dashboard built with [FTXUI](https://github.com/ArthurSonzogni/FTXUI).
+The CLI and the dashboard use the same shell engine.
 
-In this challenge, you'll build your own POSIX compliant shell that's capable of
-interpreting shell commands, running external programs and builtin commands like
-cd, pwd, echo and more. Along the way, you'll learn about shell command parsing,
-REPLs, builtin commands, and more.
+> Status: work in progress. Only features listed under "Features" are implemented and covered by tests.
+> This is not a complete POSIX shell.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+## Features
 
-# Passing the first stage
+- Built-ins: `echo`, `pwd`, `cd`, `type`, `exit`, `export`, `history`, `jobs`, `fg`, `bg`, `help`
+- Quoting: single quotes, double quotes, backslash escapes
+- Redirection: `<`, `>`, `>>`, `2>`, `2>>`, `2>&1`
+- Pipelines: `a | b | c` (exit status is the status of the last command)
+- Expansion: `$NAME`, `${NAME}`, `$?`, `~`, `~/path`
+- Background jobs: `cmd &`, `jobs`, `fg`, `bg`, `help`
+- History: Up/Down in the editor, saved to a file
+- Tab completion: built-ins, `PATH` commands, files and directories (spaces are quoted)
+- Programmable completion from a JSON file
+- FTXUI dashboard: prompt, output, working directory, jobs
 
-The entry point for your `shell` implementation is in `src/main.cpp`. Study and
-uncomment the relevant code, then run the command below to execute the tests on
-our servers:
+## Build
+
+Requirements: CMake 3.20+, a C++23 compiler, FTXUI (via vcpkg).
 
 ```sh
-codecrafters submit
+git clone https://github.com/nitnawareanshuman/cpp-shell
+cd cpp-shell
+cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+cmake --build build
 ```
 
-Time to move on to the next stage!
+If FTXUI is installed elsewhere, use `-DCMAKE_PREFIX_PATH=/path/to/ftxui` instead of the toolchain file.
 
-# Stage 2 & beyond
+## Run
 
-Note: This section is for stages 2 and beyond.
+```sh
+./build/cpp-shell              # interactive CLI
+./build/cpp-shell --ui         # FTXUI dashboard
+./build/cpp-shell -c 'echo hi | cat'   # run one command
+```
 
-1. Ensure you have `cmake` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.cpp`.
-1. Run `codecrafters submit` to submit your solution to CodeCrafters. Test
-   output will be streamed to your terminal.
+## Examples
+
+```sh
+echo "hello $USER" > out.txt
+echo more >> out.txt
+ls /missing 2> err.txt
+ls /missing > all.txt 2>&1
+cat < out.txt | sort | head -n 3
+sleep 5 &
+jobs
+fg 1
+```
+
+## History
+
+Default file: `~/.cpp-shell_history`. Set `CPP_SHELL_HISTFILE` to use another file.
+Existing entries are kept. New commands are appended. Blank commands are not saved.
+
+## Programmable completion
+
+Rules live in a JSON file (see `examples/completions.json`). Rules are data only. No scripts are run.
+
+```json
+{
+  "git": {
+    "args": { "1": ["add", "commit", "status"] },
+    "files": true
+  },
+  "cd": { "directories_only": true }
+}
+```
+
+- `args`: candidates by argument position (`"*"` means any position)
+- `files`: fall back to file names
+- `directories_only`: only directories
+
+A malformed file is reported as an error and ignored.
+
+## Tests
+
+```sh
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Tests use temporary directories. `shell_unit_tests` covers the lexer, parser, expansion, history and completion.
+`shell_integration_tests` runs real commands: redirection, pipelines (including large input), background jobs, history, completion and the CLI binary.
+
+## Layout
+
+```
+include/shell/   public headers
+src/core/        lexer, parser, expansion, executor, line editor
+src/jobs/        job table
+src/history/     history and persistence
+src/completion/  completion
+src/ui/          FTXUI dashboard
+tests/           unit and integration tests
+docs/            architecture notes
+```
+
+## Platform and limits
+
+- Target: macOS on Apple Silicon. The code uses POSIX calls (`fork`, `exec`, `pipe`, `tcsetpgrp`), so it should also build on Linux.
+- Not implemented: `&&`, `||`, `;`, globbing, here-documents, scripts, command substitution, `$(...)`.
+- The dashboard needs a real terminal. It has no automated test yet. Interactive `fg`/`bg` with Ctrl-Z needs a real terminal and has only been tested without one.
+
+## Future work
+
+- Automated terminal tests for the dashboard and Ctrl-Z job control
+- `&&`, `||`, `;` and globbing
+- Workflow management in the dashboard
