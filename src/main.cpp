@@ -11,10 +11,10 @@ namespace {
 
 void print_usage() {
   std::cout
-      << "cpp-shell — a POSIX-inspired command shell with an FTXUI dashboard\n"
+      << "cpp-shell — a POSIX-inspired command shell with a Qt dashboard\n"
       << "\nUsage:\n"
       << "  cpp-shell              Start the interactive CLI\n"
-      << "  cpp-shell --ui         Start the FTXUI dashboard\n"
+      << "  cpp-shell --ui         Start the Qt dashboard\n"
       << "  cpp-shell --dashboard  Same as --ui\n"
       << "  cpp-shell --help       Show this help\n";
 }

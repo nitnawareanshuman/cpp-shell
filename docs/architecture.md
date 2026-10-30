@@ -1,7 +1,7 @@
 # Architecture
 
 `Shell::execute(line, options)` is the only entry point for running commands.
-Both `src/main.cpp` (CLI) and `src/ui/dashboard.cpp` (FTXUI) call it. The dashboard does not run commands itself.
+Both `src/main.cpp` (CLI) and `src/ui/dashboard.cpp` (Qt) call it. The dashboard does not run commands itself.
 
 Pipeline of one command line:
 

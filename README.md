@@ -1,6 +1,6 @@
 # cpp-shell
 
-A small Unix shell written in C++23, with an optional terminal dashboard built with [FTXUI](https://github.com/ArthurSonzogni/FTXUI).
+A small Unix shell written in C++23, with an optional desktop dashboard built with [Qt](https://www.qt.io/).
 The CLI and the dashboard use the same shell engine.
 
 > Status: work in progress. Only features listed under "Features" are implemented and covered by tests.
@@ -17,11 +17,11 @@ The CLI and the dashboard use the same shell engine.
 - History: Up/Down in the editor, saved to a file
 - Tab completion: built-ins, `PATH` commands, files and directories (spaces are quoted)
 - Programmable completion from a JSON file
-- FTXUI dashboard: prompt, output, working directory, jobs
+- Qt dashboard: prompt, output, working directory, jobs
 
 ## Build
 
-Requirements: CMake 3.20+, a C++23 compiler, FTXUI (via vcpkg).
+Requirements: CMake 3.20+, a C++23 compiler, Qt 6 Widgets (via vcpkg).
 
 ```sh
 git clone https://github.com/nitnawareanshuman/cpp-shell
@@ -30,13 +30,13 @@ cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpk
 cmake --build build
 ```
 
-If FTXUI is installed elsewhere, use `-DCMAKE_PREFIX_PATH=/path/to/ftxui` instead of the toolchain file.
+If Qt is installed elsewhere, use `-DCMAKE_PREFIX_PATH=/path/to/qt6` instead of the toolchain file.
 
 ## Run
 
 ```sh
 ./build/cpp-shell              # interactive CLI
-./build/cpp-shell --ui         # FTXUI dashboard
+./build/cpp-shell --ui         # Qt dashboard
 ./build/cpp-shell -c 'echo hi | cat'   # run one command
 ```
 
@@ -96,7 +96,7 @@ src/core/        lexer, parser, expansion, executor, line editor
 src/jobs/        job table
 src/history/     history and persistence
 src/completion/  completion
-src/ui/          FTXUI dashboard
+src/ui/          Qt dashboard
 tests/           unit and integration tests
 docs/            architecture notes
 ```
